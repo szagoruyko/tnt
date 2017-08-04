@@ -58,29 +58,3 @@ class HooksList(Hook):
 
     def __iter__(self):
         return iter(self.hooks)
-
-
-class LearningRateScheduler(Hook):
-    """Learning rate scheduler.
-
-    Parameters
-    ----------
-    schedule: function
-        a function that takes an epoch index as input (integer, indexed from 0)
-        and returns a new learning rate as output (float).
-    """
-
-    def __init__(self, schedule):
-        super(LearningRateScheduler, self).__init__()
-        assert callable(schedule), 'schedule should be callable'
-        self.schedule = schedule
-
-    def on_start_epoch(self, state):
-        optimizer = state['optimizer']
-        epoch = state['epoch']
-        lr = self.schedule(epoch)
-
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = lr
-
-        state['optimizer'] = optimizer

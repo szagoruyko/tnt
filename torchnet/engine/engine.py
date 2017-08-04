@@ -9,9 +9,9 @@ class Engine(object):
         else:
             self.hook = hook or Hook()
 
-    def train(self, network, iterator, maxepoch, optimizer):
+    def train(self, closure, iterator, maxepoch, optimizer):
         try:
-            state = {'network': network,
+            state = {'closure': closure,
                      'iterator': iterator,
                      'maxepoch': maxepoch,
                      'optimizer': optimizer,
@@ -32,7 +32,7 @@ class Engine(object):
 
                     def closure():
                         # forward
-                        loss, output = state['network'](state['sample'])
+                        loss, output = state['closure'](state)
                         state['output'] = output
                         state['loss'] = loss
                         self.hook.on_forward(state)
@@ -61,10 +61,10 @@ class Engine(object):
 
         return state
 
-    def test(self, network, iterator):
+    def test(self, closure, iterator):
         try:
             state = {
-                'network': network,
+                'closure': closure,
                 'iterator': iterator,
                 't': 0,
                 'train': False}
@@ -77,7 +77,7 @@ class Engine(object):
 
                 def closure():
                     # forward
-                    loss, output = state['network'](state['sample'])
+                    loss, output = state['closure'](state['sample'])
                     state['output'] = output
                     state['loss'] = loss
                     self.hook.on_forward(state)

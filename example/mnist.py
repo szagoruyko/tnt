@@ -13,7 +13,7 @@ def get_iterator(mode):
     ds = MNIST(root='./', download=True, train=mode)
     data = getattr(ds, 'train_data' if mode else 'test_data')
     labels = getattr(ds, 'train_labels' if mode else 'test_labels')
-    tds = tnt.dataset.TensorDataset([data, labels])
+    tds = tnt.dataset.TensorDataset({'input': data, 'target': labels})
     return tds.parallel(batch_size=128, num_workers=4, shuffle=mode)
 
 
@@ -38,6 +38,42 @@ def f(params, inputs, mode):
     return o
 
 
+class ClassErrorHook(tnt.engine.Hook):
+
+    def __init__(self, accuracy=False):
+        super(ClassErrorHook, self).__init__()
+        self.meter = tnt.meter.ClassErrorMeter(accuracy=accuracy)
+
+    def on_start_epoch(self, state):
+        self.meter.reset()
+
+    def on_forward(self, state):
+        self.meter.add(state['output'].data, torch.LongTensor(state['sample']['target']))
+
+
+class LossMeterHook(tnt.engine.Hook):
+
+    def __init__(self):
+        super(LossMeterHook, self).__init__()
+        self.meter = tnt.meter.AverageValueMeter()
+
+    def on_start_epoch(self, state):
+        self.meter.reset()
+
+    def on_forward(self, state):
+        self.meter.add(state['loss'])
+
+
+class ProgbarHook(tnt.engine.Hook):
+
+    def __init__(self, progbar):
+        super(ProgbarHook, self).__init__()
+        self.progbar = progbar
+
+    def on_start_epoch(self, state):
+        state['iterator'] = self.progbar(state['iterator'])
+
+
 def main():
     params = {
             'conv0.weight': conv_init(1, 50, 5),  'conv0.bias': torch.zeros(50),
@@ -49,43 +85,17 @@ def main():
 
     optimizer = torch.optim.SGD(params.values(), lr=0.01, momentum=0.9, weight_decay=0.0005)
 
-    engine = Engine()
-    meter_loss = tnt.meter.AverageValueMeter()
-    classerr = tnt.meter.ClassErrorMeter(accuracy=True)
+    engine = Engine(hook=[ClassErrorHook(accuracy=True), ProgbarHook(tqdm)])
 
-    def h(sample):
-        inputs = Variable(sample[0].float() / 255.0)
-        targets = Variable(torch.LongTensor(sample[1]))
-        o = f(params, inputs, sample[2])
+    def h(state):
+        sample = state['sample']
+        mode = state['train']
+        inputs = Variable(sample['input'].float() / 255.0)
+        targets = Variable(sample['target'])
+        o = f(params, inputs, mode)
         return F.cross_entropy(o, targets), o
 
-    def reset_meters():
-        classerr.reset()
-        meter_loss.reset()
-
-    def on_sample(state):
-        state['sample'].append(state['train'])
-
-    def on_forward(state):
-        classerr.add(state['output'].data, torch.LongTensor(state['sample'][1]))
-        meter_loss.add(state['loss'].data[0])
-
-    def on_start_epoch(state):
-        reset_meters()
-        state['iterator'] = tqdm(state['iterator'])
-
-    def on_end_epoch(state):
-        print 'Training loss: %.4f, accuracy: %.2f%%' % (meter_loss.value()[0], classerr.value()[0])
-        # do validation at the end of each epoch
-        reset_meters()
-        engine.test(h, get_iterator(False))
-        print 'Testing loss: %.4f, accuracy: %.2f%%' % (meter_loss.value()[0], classerr.value()[0])
-
-    engine.hooks['on_sample'] = on_sample
-    engine.hooks['on_forward'] = on_forward
-    engine.hooks['on_start_epoch'] = on_start_epoch
-    engine.hooks['on_end_epoch'] = on_end_epoch
-    engine.train(h, get_iterator(True), maxepoch=10, optimizer=optimizer)
+    engine.train(closure=h, iterator=get_iterator(True), maxepoch=10, optimizer=optimizer)
 
 
 if __name__ == '__main__':
